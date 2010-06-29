@@ -1,6 +1,4 @@
-require 'rubygems'
-require 'scout'
-
+require File.dirname(__FILE__) + '/../spec/spec_helper'
 require File.dirname(__FILE__) + '/mysql_query_statistics'
 
 describe MysqlQueryStatistics do
@@ -58,7 +56,7 @@ OUT
     options  = { }
 
     plugin = MysqlQueryStatistics.new(last_run, memory, options)
-    MysqlQueryStatistics::RUN_TIME = current_run
+    plugin.run_time = current_run
 
     plugin.should_receive(:eval).and_return(<<-OUT)
 Variable_name	Value
@@ -81,7 +79,7 @@ OUT
     options  = { :sequential_entries => 'Com_insert'}
 
     plugin = MysqlQueryStatistics.new(last_run, memory, options)
-    MysqlQueryStatistics::RUN_TIME = current_run
+    plugin.run_time = current_run
     
     plugin.should_receive(:eval).and_return(<<-OUT)
 Variable_name	Value
@@ -102,7 +100,7 @@ OUT
     options  = { :absolute_entries => 'Innodb_buffer_pool_pages_dirty'}
 
     plugin = MysqlQueryStatistics.new(last_run, memory, options)
-    MysqlQueryStatistics::RUN_TIME = current_run
+    plugin.run_time = current_run
 
     plugin.should_receive(:eval).and_return(<<-OUT)
 Variable_name	Value

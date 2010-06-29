@@ -7,7 +7,12 @@ require 'set'
 class MysqlQueryStatistics < Scout::Plugin
   
   # needs "mysql"
-  RUN_TIME = Time.now # reavaluated each run
+  attr_accessor :run_time
+  
+  def initialize(last_run, memory, options)
+    @run_time = Time.now
+    super
+  end
 
   def build_report
     # option_value returns nil if the option value is blank
@@ -59,7 +64,8 @@ class MysqlQueryStatistics < Scout::Plugin
   end
   
   # Note this calculates the difference between the last run and the current run.
-  def calculate_counter(name, value, current_time=RUN_TIME)
+  def calculate_counter(name, value, current_time=nil)
+    current_time ||= run_time()
     result = nil
     # only check if a past run has a value for the specified query type
     if memory(name) && memory(name).is_a?(Hash)
@@ -80,7 +86,8 @@ class MysqlQueryStatistics < Scout::Plugin
     result
   end
   
-  def append_value_to_report(name, value, report, current_time=RUN_TIME)
+  def append_value_to_report(name, value, report, current_time=nil)
+    current_time ||= run_time()
     squence_value = calculate_counter(name, value, current_time)
     report[name] = squence_value if squence_value
   end
