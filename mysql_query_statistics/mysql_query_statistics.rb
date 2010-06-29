@@ -5,57 +5,56 @@
 require 'set'
 
 class MysqlQueryStatistics < Scout::Plugin
-  ENTRIES = %w(Com_insert Com_select Com_update Com_delete).to_set
   
-  needs "mysql"
+  # needs "mysql"
+  RUN_TIME = Time.now # reavaluated each run
 
   def build_report
-    # get_option returns nil if the option value is blank
-    user     = get_option(:user) || 'root'
-    password = get_option(:password)
-    host     = get_option(:host)
-    port     = get_option(:port)
-    socket   = get_option(:socket)
-    
-    now = Time.now
-    mysql = Mysql.connect(host, user, password, nil, (port.nil? ? nil : port.to_i), socket)
-    result = mysql.query('SHOW /*!50002 GLOBAL */ STATUS')
-    rows = []
-    total = 0
-    result.each do |row| 
-      rows << row if ENTRIES.include?(row.first)
+    # option_value returns nil if the option value is blank
+    mysql              = 'mysql'
+    user               = option_value(:user) || 'root'
+    password           = option_value(:password)
+    host               = option_value(:host)
+    port               = option_value(:port)
+    socket             = option_value(:socket)
+    sequential_entries = option_value(:sequential_entries).split(' ').to_set
+    absolute_entries   = option_value(:absolute_entries).split(' ').to_set
+    query              = 'SHOW /*!50002 GLOBAL */ STATUS'
 
-      total += row.last.to_i if row.first[0..3] == 'Com_'
-    end
-    result.free
+    # mysql = Mysql.connect(host, user, password, nil, (port.nil? ? nil : port.to_i), socket)
+    # result = mysql.query('SHOW /*!50002 GLOBAL */ STATUS')
+
+    cmd = %Q[`#{mysql} --user="#{user}" --host="#{host}" --password="#{password}" --execute="#{query.gsub(/"/,'\"')}"`]
+    result = eval(cmd).split("\n").collect!{|row| row.split("\t")}[1..-1]
 
     report_hash = {}
-    rows.each do |row|
-      name = row.first[/_(.*)$/, 1]
-      value = calculate_counter(now, name, row.last.to_i)
-      # only report if a value is calculated
-      next unless value
-      report_hash[name] = value
+
+    total = 0
+    result.each do |row| 
+      key, value = row.first, row.last.to_i
+      
+      append_value_to_report(name, value, report_hash) if sequential_entries.include?(row.first)
+      report_hash[name] = value if absolute_entries.include?(row.first)
+
+      total += value if name =~ /^Com_/ # Com_insert Com_select Com_update Com_delete
     end
 
-
-    total_val = calculate_counter(now, 'total', total)
-    report_hash['total'] = total_val if total_val
+    append_value_to_report('total', total, report_hash)
     
     report(report_hash)
   end
-
+  
   private
   
   # Returns nil if an empty string
-  def get_option(opt_name)
+  def option_value(opt_name)
     val = option(opt_name)
     val = (val.is_a?(String) and val.strip == '') ? nil : val
     return val
   end
   
   # Note this calculates the difference between the last run and the current run.
-  def calculate_counter(current_time, name, value)
+  def calculate_counter(name, value, current_time=RUN_TIME)
     result = nil
     # only check if a past run has a value for the specified query type
     if memory(name) && memory(name).is_a?(Hash)
@@ -73,6 +72,11 @@ class MysqlQueryStatistics < Scout::Plugin
     remember(name => {:time => current_time, :value => value})
     
     result
+  end
+  
+  def append_value_to_report(name, value, report, current_time=RUN_TIME)
+    squence_value = calculate_counter(now, name, value)
+    report[name] = squence_value if squence_value
   end
 end
 
