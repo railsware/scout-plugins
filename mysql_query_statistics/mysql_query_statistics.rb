@@ -17,31 +17,36 @@ class MysqlQueryStatistics < Scout::Plugin
     host               = option_value(:host)
     port               = option_value(:port)
     socket             = option_value(:socket)
-    sequential_entries = option_value(:sequential_entries).split(' ').to_set
-    absolute_entries   = option_value(:absolute_entries).split(' ').to_set
+    sequential_entries = option(:sequential_entries).to_s.strip.split(' ').to_set
+    absolute_entries   = option(:absolute_entries).to_s.strip.split(' ').to_set
     query              = 'SHOW /*!50002 GLOBAL */ STATUS'
 
     # mysql = Mysql.connect(host, user, password, nil, (port.nil? ? nil : port.to_i), socket)
     # result = mysql.query('SHOW /*!50002 GLOBAL */ STATUS')
 
-    cmd = %Q[`#{mysql} --user="#{user}" --host="#{host}" --password="#{password}" --execute="#{query.gsub(/"/,'\"')}"`]
-    result = eval(cmd).split("\n").collect!{|row| row.split("\t")}[1..-1]
-
+    cmd = %Q[`#{mysql} --execute="#{query.gsub(/"/,'\"')}" --user="#{user}" --host="#{host}" --port="#{port}" --password="#{password}" --socket="#{socket}"`]
+    
+    result = eval(cmd).split("\n")[1..-1]
+    
     report_hash = {}
 
     total = 0
     result.each do |row| 
-      key, value = row.first, row.last.to_i
+      key, value = row.split("\t")
+      value = value.to_i
       
-      append_value_to_report(name, value, report_hash) if sequential_entries.include?(row.first)
-      report_hash[name] = value if absolute_entries.include?(row.first)
+      append_value_to_report(key, value, report_hash) if sequential_entries.include?(key)
+      report_hash[key] = value if absolute_entries.include?(key)
 
-      total += value if name =~ /^Com_/ # Com_insert Com_select Com_update Com_delete
+      total += value if key =~ /^Com_/ # Com_insert Com_select Com_update Com_delete
     end
 
     append_value_to_report('total', total, report_hash)
     
     report(report_hash)
+  end
+  
+  def test(a)
   end
   
   private
@@ -60,6 +65,7 @@ class MysqlQueryStatistics < Scout::Plugin
     if memory(name) && memory(name).is_a?(Hash)
       last_time, last_value = memory(name).values_at(:time, :value)
       # We won't log it if the value has wrapped
+
       if last_value and value >= last_value
         elapsed_seconds = current_time - last_time
         elapsed_seconds = 1 if elapsed_seconds < 1
@@ -75,7 +81,7 @@ class MysqlQueryStatistics < Scout::Plugin
   end
   
   def append_value_to_report(name, value, report, current_time=RUN_TIME)
-    squence_value = calculate_counter(now, name, value)
+    squence_value = calculate_counter(name, value, current_time)
     report[name] = squence_value if squence_value
   end
 end
