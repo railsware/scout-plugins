@@ -24,6 +24,9 @@ class RailsRequests < Scout::Plugin
     name: Ignored Actions
     notes: Takes a regex. Any URIs matching this regex will NOT count as slow requests, and you will NOT be notified if they exceed Max Request Length. Matching actions will still be included in daily summaries.
     attributes: advanced
+  rails_version:
+    notes: "The version of Ruby on Rails used for this application (examples: 2, 2.2, 3). If none is provided, defaults to 2."
+    attributes: advanced
   EOS
 
   needs "request_log_analyzer"
@@ -47,6 +50,23 @@ class RailsRequests < Scout::Plugin
         error("Argument error","Could not understand the regular expression for excluding slow actions: #{option(:ignored_actions)}. #{$!.message}")
       end
     end
+    
+    # set the rails version for use with parsing. if none provided, defaults to rails2.
+    rails_version = option(:rails_version)
+    rails_version = rails_version.to_s[0..0].to_i
+
+    load_format = case rails_version
+              when 0 # none provided - use Rails2
+                :rails
+              when 2
+                :rails
+              when 3
+                :rails3
+              else
+                :rails
+              end
+              
+    @format= RequestLogAnalyzer::FileFormat.load(load_format)
 
     report_data        = { :slow_request_rate      => 0,
                            :request_rate           => 0,
@@ -70,58 +90,52 @@ class RailsRequests < Scout::Plugin
     last_request_time  = nil
     # needed to ensure that the analyzer doesn't run if the log file isn't found.
     @file_found        = true
+    
+    # Get RLA's line definitions. We'll use this to parse each line. 
+    completed_line_def  = @format.line_definitions[:completed]
+    processing_line_def = @format.line_definitions[:processing]
+    started_line_def    = @format.line_definitions[:started] # will be nil with Rails2
+    request             = @format.request
 
-    # Let RLA determine Rails2/Rails3 log format
-    format=RequestLogAnalyzer::FileFormat.autodetect(log_path)
+    time_of_request = nil
+    started = {}
+    last_completed_line = ''
 
-    if format
-      # Get RLA's lie definitions. We'll use this to parse each line. 
-      completed_line_def  = format.line_definitions[:completed]
-      processing_line_def = format.line_definitions[:processing]
-      started_line_def    = format.line_definitions[:started] # will be nil with Rails2
-      request             = format.request
+    # read backward, counting lines
+    Elif.foreach(log_path) do |line|
+      if matches = completed_line_def.matches(line)
+        last_completed_line = line
+        last_completed = completed_line_def.convert_captured_values(matches[:captures],request) # returns a hash, see RequestLogAnalyzer::LineDefinition
+      elsif last_completed and started_line_def and matches = started_line_def.matches(line) # In Rails3, timestamp is in :started line
+        started = started_line_def.convert_captured_values(matches[:captures],request)
+        time_of_request = started[:timestamp]
+      elsif last_completed and matches = processing_line_def.matches(line) # In Rails3, timestamp is in :processing line
+        processing = processing_line_def.convert_captured_values(matches[:captures],request) # returns a hash, see RequestLogAnalyzer::LineDefinition
+        time_of_request = processing[:timestamp]
+      end
 
-      time_of_request = nil
-      started = {}
-      last_completed_line = ''
-
-      # read backward, counting lines
-      Elif.foreach(log_path) do |line|
-        if matches = completed_line_def.matches(line)
-          last_completed_line = line
-          last_completed = completed_line_def.convert_captured_values(matches[:captures],request) # returns a hash, see RequestLogAnalyzer::LineDefinition
-        elsif last_completed and started_line_def and matches = started_line_def.matches(line) # In Rails3, timestamp is in :started line
-          started = started_line_def.convert_captured_values(matches[:captures],request)
-          time_of_request = started[:timestamp]
-        elsif last_completed and matches = processing_line_def.matches(line) # In Rails3, timestamp is in :processing line
-          processing = processing_line_def.convert_captured_values(matches[:captures],request) # returns a hash, see RequestLogAnalyzer::LineDefinition
-          time_of_request = processing[:timestamp]
-        end
-
-        if time_of_request
-          last_request_time = time_of_request if last_request_time.nil?
-          if time_of_request <= previous_last_request_time_as_timestamp
-            break
-          else
-            request_count += 1            
-            total_request_time     += last_completed[:duration]
-            total_view_time        += (last_completed[:view] || 0.0)
-            total_db_time          += (last_completed[:db] || 0.0) 
-            if max_length > 0 and last_completed[:duration] > max_length
-              # url is in :completed in rails2; path is in :started in rails3
-              url= last_completed[:url] || started[:path]
-              # only test for ignored_actions if we actually have an ignored_actions regex
-              if ignored_actions.nil? || (ignored_actions.is_a?(Regexp) && !ignored_actions.match(url))
-                slow_request_count += 1                
-                slow_requests      += "#{url}\n#{last_completed_line.split('[').first}\n\n"
-              end
+      if time_of_request
+        last_request_time = time_of_request if last_request_time.nil?
+        if time_of_request <= previous_last_request_time_as_timestamp
+          break
+        else
+          request_count += 1            
+          total_request_time     += last_completed[:duration]
+          total_view_time        += (last_completed[:view] || 0.0)
+          total_db_time          += (last_completed[:db] || 0.0) 
+          if max_length > 0 and last_completed[:duration] > max_length
+            # url is in :completed in rails2; path is in :started in rails3
+            url= last_completed[:url] || started[:path]
+            # only test for ignored_actions if we actually have an ignored_actions regex
+            if ignored_actions.nil? || (ignored_actions.is_a?(Regexp) && !ignored_actions.match(url))
+              slow_request_count += 1                
+              slow_requests      += "#{url}\n#{last_completed_line.split('[').first}\n\n"
             end
-          end # request should be analyzed
-          time_of_request = nil
-        end
+          end
+        end # request should be analyzed
+        time_of_request = nil
       end
     end
-    # no else for now -- if format can't be identified, it's often because log is empty immediately after rotation.
 
     # Create a single alert that holds all of the requests that exceeded the +max_request_length+.
     if (count = slow_request_count) > 0
@@ -239,15 +253,14 @@ class RailsRequests < Scout::Plugin
   def analyzer_with_older_rla(last_summary, stop_time, log_file)
     summary  = StringIO.new
     output   = EmbeddedHTML.new(summary)
-    format   = RequestLogAnalyzer::FileFormat.load(:rails)
     options  = {:source_files => log_file, :output => output}
-    source   = RequestLogAnalyzer::Source::LogParser.new(format, options)
+    source   = RequestLogAnalyzer::Source::LogParser.new(@format, options)
     control  = RequestLogAnalyzer::Controller.new(source, options)
     control.add_filter(:timespan, :after  => last_summary)
     control.add_filter(:timespan, :before => stop_time)
     control.add_aggregator(:summarizer)
     source.progress = nil
-    format.setup_environment(control)
+    @format.setup_environment(control)
     silence do
       control.run!
     end
@@ -255,8 +268,6 @@ class RailsRequests < Scout::Plugin
   end
   
   def analyzer_with_newer_rla(last_summary, stop_time, log_file)
-    format=RequestLogAnalyzer::FileFormat.autodetect(log_file.path)
-    format= format ? format.class : RequestLogAnalyzer::FileFormat::Rails
     summary = StringIO.new
     RequestLogAnalyzer::Controller.build(
       :output       => EmbeddedHTML,
@@ -264,7 +275,7 @@ class RailsRequests < Scout::Plugin
       :after        => last_summary, 
       :before       => stop_time,
       :source_files => log_file,
-      :format       => format
+      :format       => @format
     ).run!
     summary.string.strip
   end

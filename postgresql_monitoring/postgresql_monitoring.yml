@@ -1,0 +1,52 @@
+metadata:
+  rows_select_idx:
+    label: SELECTs (index)
+    units: rows/sec
+    precision: 1
+  rows_select_scan:
+    label: SELECTs (scan)
+    units: rows/sec
+    precision: 1
+  rows_delete:
+    label: DELETEs
+    units: rows/sec
+    precision: 1
+  rows_update:
+    label: UPDATEs
+    units: rows/sec
+    precision: 1
+  rows_insert:
+    label: INSERTs
+    units: rows/sec
+    precision: 1
+  rows_total:
+    label: Total
+    units: rows/sec
+    precision: 1
+  xact_commit:
+    label: Transactions committed
+    units: txn/sec
+    precision: 1
+  xact_rollback:
+    label: Transactions rolled back
+    units: txn/sec
+    precision: 1
+  xact_total:
+    label: Total transactions
+    units: txn/sec
+    precision: 1
+  blks_read:
+    label: Blocks read from disk
+    units: blocks/sec
+    precision: 1
+  blks_hit:
+    label: Blocks read from buffer cache
+    units: blocks/sec
+    precision: 1
+  blks_cache_pc:
+    label: Buffer cache hit rate
+    units: %
+    precision: 1
+  numbackends:
+    label: Active backends
+    precision: 0
