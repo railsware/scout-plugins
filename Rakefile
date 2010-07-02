@@ -1,5 +1,5 @@
-require "rake/testtask"
 require "rubygems"
+require "rake/testtask"
 require 'spec/rake/spectask'
 
 Rake::TestTask.new do |test|
@@ -8,10 +8,8 @@ Rake::TestTask.new do |test|
   test.verbose = true
 end
 
-namespace :spec do
+Spec::Rake::SpecTask.new(:spec) do |t|
   desc "Run specs for rake tasks"
-  Spec::Rake::SpecTask.new(:raketasks) do |t|
-    t.spec_opts = ['--options', "\"spec/spec.opts\""]
-    t.spec_files = FileList["**/spec.rb"]
-  end
+  t.spec_opts = ['--options', "\"spec/spec.opts\""]
+  t.spec_files = FileList["**/spec.rb"]
 end
