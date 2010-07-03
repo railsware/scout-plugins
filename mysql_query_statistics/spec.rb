@@ -3,10 +3,6 @@ require File.dirname(__FILE__) + '/mysql_query_statistics'
 
 describe MysqlQueryStatistics do
   
-  before(:all) do
-    
-  end
-  
   it "should execute the right mysql command" do
     last_run, memory, options=Time.now-3*60, {}, {}
     plugin=MysqlQueryStatistics.new(last_run, memory, options)
