@@ -114,7 +114,7 @@ class AwsCloudwatch < Scout::Plugin
 
       if !stats.is_a?(Array) || stats.empty?
         error(:subject=>"AWS CloudWatch Processing Error", :body=>"Something went wrong with AWS getMetricStatistics for measure: #{measure}, label #{label}\n#{response.inspect}" )
-        continue
+        next
       end
       
       stats = stats.first
