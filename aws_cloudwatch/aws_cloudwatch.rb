@@ -1,3 +1,4 @@
+gem 'amazon-ec2', '>=0.7.5'
 require 'AWS'
 class AwsCloudwatch < Scout::Plugin
   TIME_FORMAT='%Y-%m-%dT%H:%M:%S+00:00' unless const_defined?('TIME_FORMAT')
