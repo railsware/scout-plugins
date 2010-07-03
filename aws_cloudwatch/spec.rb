@@ -30,8 +30,10 @@ describe AwsCloudwatch do
 
     FakeWeb.allow_net_connect = false
 
-    [ LABELS - ['StorageSpace'] ].each do |label, unit|
-      @random_label_values[label] = random_value = Kernel.rand*100000.0
+    LABELS.each do |label, unit|
+      next if label == 'StorageSpace'
+      
+      @random_label_values[label] = random_value = Kernel.rand(1000000)*0.1
       FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?#{label}|, :body => <<-EOF)
 <GetMetricStatisticsResponse xmlns="http://monitoring.amazonaws.com/doc/2009-05-15/">
   <GetMetricStatisticsResult>
@@ -52,106 +54,76 @@ describe AwsCloudwatch do
 EOF
     end
 
-    @random_label_values['StorageSpace'] = random_value = Kernel.rand*100000.0
-    FakeWeb.register_uri(:get, %r|https://rds.amazonaws.com/|, :body => <<-EOF)
-<GetMetricStatisticsResponse xmlns="http://monitoring.amazonaws.com/doc/2009-05-15/">
-  <GetMetricStatisticsResult>
-    <Datapoints>
-      <member>
-        <Timestamp>#{Time.now.strftime('%Y-%m-%dT%H:%M:%SZ')}</Timestamp>
-        <Unit>Giga Bytes</Unit>
-        <Samples>5.0</Samples>
-        <Average>#{random_value}</Average>
-      </member>
-    </Datapoints>
-    <Label>StorageSpace</Label>
-  </GetMetricStatisticsResult>
+    @random_label_values['StorageSpace'] = random_value = Kernel.rand(1000).to_f
+    FakeWeb.register_uri(:post, %r|https://rds.amazonaws.com/|, :body => <<-EOF)
+    #<Net::HTTPOK:0x101897cc0>
+<DescribeDBInstancesResponse xmlns="http://rds.amazonaws.com/admin/2009-10-16/">
+  <DescribeDBInstancesResult>
+    <DBInstances>
+      <DBInstance>
+        <LatestRestorableTime>2010-07-03T13:15:01Z</LatestRestorableTime>
+        <Engine>mysql5.1</Engine>
+        <PendingModifiedValues/>
+        <BackupRetentionPeriod>7</BackupRetentionPeriod>
+        <DBInstanceStatus>available</DBInstanceStatus>
+        <DBParameterGroups>
+          <DBParameterGroup>
+            <ParameterApplyStatus>in-sync</ParameterApplyStatus>
+            <DBParameterGroupName>rp-tracking-service</DBParameterGroupName>
+          </DBParameterGroup>
+        </DBParameterGroups>
+        <DBInstanceIdentifier>rp-tracking-service</DBInstanceIdentifier>
+        <Endpoint>
+          <Port>3306</Port>
+          <Address>rp-tracking-service.chuf4accixkx.us-east-1.rds.amazonaws.com</Address>
+        </Endpoint>
+        <DBSecurityGroups>
+          <DBSecurityGroup>
+            <Status>active</Status>
+            <DBSecurityGroupName>default</DBSecurityGroupName>
+          </DBSecurityGroup>
+        </DBSecurityGroups>
+        <PreferredBackupWindow>03:00-05:00</PreferredBackupWindow>
+        <PreferredMaintenanceWindow>sat:07:00-sat:11:00</PreferredMaintenanceWindow>
+        <AvailabilityZone>us-east-1c</AvailabilityZone>
+        <InstanceCreateTime>2009-11-10T14:29:40.700Z</InstanceCreateTime>
+        <AllocatedStorage>#{random_value}</AllocatedStorage>
+        <DBInstanceClass>db.m1.large</DBInstanceClass>
+        <MasterUsername>root</MasterUsername>
+      </DBInstance>
+    </DBInstances>
+  </DescribeDBInstancesResult>
   <ResponseMetadata>
-    <RequestId>ceded9a9-85da-11df-a662-69fbdd7a7fe8</RequestId>
+    <RequestId>4a538f00-86a5-11df-a855-6f7e7a5a1fd9</RequestId>
   </ResponseMetadata>
-</GetMetricStatisticsResponse>
+</DescribeDBInstancesResponse>
 EOF
 
   
     plugin.build_report
     @report_hash = plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
-    puts @report_hash.inspect
-    puts @random_label_values.inspect
     
   end
   
-  [ LABELS.keys - ["FreeStorageSpace"] ].each do |label| 
+  (LABELS.keys - ["FreeStorageSpace"]).each do |label| 
     it "should receive the right value for #{label}" do
       @report_hash[label].class.should == @random_label_values[label].class
       @report_hash[label].to_s.should == @random_label_values[label].to_s
     end    
   end
 
-  it "should receive the right value for FreeStorageSpace" do
+  it "should receive the right value for Storage**" do
     free_storage_space = @random_label_values["FreeStorageSpace"]
-    free_storage_space = free_storage_space / (1024 * 1024 * 1024)
+    free_storage_space = ((free_storage_space.to_f / (1024 * 1024 * 1024))*100).floor / 100
     storage_space      = @random_label_values["StorageSpace"]
     used_storage_space = storage_space - free_storage_space
 
 
-    @report_hash["StorageSpace"].to_s.should          == storage_space.to_s
-    @report_hash["FreeStorageSpace"].to_s.should      == value.to_s
-    @report_hash["UsedStorageSpace"].to_s.should      == used_storage_space.to_s
-    @report_hash["StorageSpace capacity"].to_s.should == (used_storage_space / storage_space * 100).to_s
+    @report_hash["StorageSpace"].should          == storage_space
+    @report_hash["FreeStorageSpace"].should      == free_storage_space
+    @report_hash["UsedStorageSpace"].should      == used_storage_space
+    @report_hash["StorageSpace capacity"].should == (used_storage_space / storage_space * 100)
   end    
   
   
 end
-
-
-
-# {"Action"=>"GetMetricStatistics", "Dimensions.member.1.Value"=>"rp-tracking-service", "Version"=>"2009-05-15", "MeasureName"=>"WriteThroughput", "AWSAccessKeyId"=>"0B5MN90FYXXKWR8S17G2", "Period"=>"300", "SignatureVersion"=>"1", "Timestamp"=>"2010-07-02T13:07:46Z", "Namespace"=>"AWS/RDS", "StartTime"=>"2010-07-02T13:02:38+00:00", "Dimensions.member.1.Name"=>"DBInstanceIdentifier", "Statistics.member.1"=>"Average", "EndTime"=>"2010-07-02T13:07:38+00:00"}
-# params:
-# nil
-# request address : https://monitoring.amazonaws.com:443/?AWSAccessKeyId=0B5MN90FYXXKWR8S17G2&Action=GetMetricStatistics&Dimensions.member.1.Name=DBInstanceIdentifier&Dimensions.member.1.Value=rp-tracking-service&EndTime=2010-07-02T13%3A07%3A38%2B00%3A00&MeasureName=WriteThroughput&Namespace=AWS%2FRDS&Period=300&SignatureVersion=1&StartTime=2010-07-02T13%3A02%3A38%2B00%3A00&Statistics.member.1=Average&Timestamp=2010-07-02T13%3A07%3A46Z&Version=2009-05-15&Signature=te%2BFObfhYtw8mupe2VnyIZH%2Bmao%3D
-# response:
-# #<Net::HTTPOK:0x10241f480>
-# <GetMetricStatisticsResponse xmlns="http://monitoring.amazonaws.com/doc/2009-05-15/">
-#   <GetMetricStatisticsResult>
-#     <Datapoints>
-#       <member>
-#         <Timestamp>2010-07-02T13:02:00Z</Timestamp>
-#         <Unit>Bytes/Second</Unit>
-#         <Samples>5.0</Samples>
-#         <Average>1195265.5437945272</Average>
-#       </member>
-#     </Datapoints>
-#     <Label>WriteThroughput</Label>
-#   </GetMetricStatisticsResult>
-#   <ResponseMetadata>
-#     <RequestId>ceded9a9-85da-11df-a662-69fbdd7a7fe8</RequestId>
-#   </ResponseMetadata>
-# </GetMetricStatisticsResponse>
-# 
-# {"Action"=>"GetMetricStatistics", "Dimensions.member.1.Value"=>"rp-tracking-service", "Version"=>"2009-05-15", "MeasureName"=>"ReadThroughput", "AWSAccessKeyId"=>"0B5MN90FYXXKWR8S17G2", "Period"=>"300", "SignatureVersion"=>"1", "Timestamp"=>"2010-07-02T13:07:45Z", "Namespace"=>"AWS/RDS", "StartTime"=>"2010-07-02T13:02:38+00:00", "Dimensions.member.1.Name"=>"DBInstanceIdentifier", "Statistics.member.1"=>"Average", "EndTime"=>"2010-07-02T13:07:38+00:00"}
-# params:
-# nil
-# request address : https://monitoring.amazonaws.com:443/?AWSAccessKeyId=0B5MN90FYXXKWR8S17G2&Action=GetMetricStatistics&Dimensions.member.1.Name=DBInstanceIdentifier&Dimensions.member.1.Value=rp-tracking-service&EndTime=2010-07-02T13%3A07%3A38%2B00%3A00&MeasureName=ReadThroughput&Namespace=AWS%2FRDS&Period=300&SignatureVersion=1&StartTime=2010-07-02T13%3A02%3A38%2B00%3A00&Statistics.member.1=Average&Timestamp=2010-07-02T13%3A07%3A45Z&Version=2009-05-15&Signature=mKdDIzxk8XOlNbhmQL9%2BvcFqcJc%3D
-# response:
-# #<Net::HTTPOK:0x1024321e8>
-# <GetMetricStatisticsResponse xmlns="http://monitoring.amazonaws.com/doc/2009-05-15/">
-#   <GetMetricStatisticsResult>
-#     <Datapoints>
-#       <member>
-#         <Timestamp>2010-07-02T13:02:00Z</Timestamp>
-#         <Unit>Bytes/Second</Unit>
-#         <Samples>5.0</Samples>
-#         <Average>299045.0018647535</Average>
-#       </member>
-#     </Datapoints>
-#     <Label>ReadThroughput</Label>
-#   </GetMetricStatisticsResult>
-#   <ResponseMetadata>
-#     <RequestId>ce765366-85da-11df-b0b9-0fe5cd074bc5</RequestId>
-#   </ResponseMetadata>
-# </GetMetricStatisticsResponse>
-# 
-# 
-# 
-# 
-# 

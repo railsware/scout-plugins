@@ -120,7 +120,7 @@ class AwsCloudwatch < Scout::Plugin
       stats = stats.first
       
       if label == "FreeStorageSpace"
-        stats[:average] = stats[:average].to_f / (1024 * 1024 * 1024)
+        stats[:average] = ((stats[:average].to_f / (1024 * 1024 * 1024))*100).floor / 100
         used_storage_space = storage_space - stats[:average]
 
         report_data["UsedStorageSpace"] = used_storage_space
