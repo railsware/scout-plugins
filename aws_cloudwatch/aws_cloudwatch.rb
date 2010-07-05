@@ -2,60 +2,97 @@ gem 'amazon-ec2', '>=0.7.5'
 require 'AWS'
 class AwsCloudwatch < Scout::Plugin
   TIME_FORMAT='%Y-%m-%dT%H:%M:%S+00:00' unless const_defined?('TIME_FORMAT')
+  
+  RDS_NAMESPACE = "AWS/RDS"
+  EC2_NAMESPACE = "AWS/EC2"
+
+  # Available measures for EC2 instances:
+  # NetworkIn NetworkOut DiskReadOps DiskWriteOps DiskReadBytes DiskWriteBytes CPUUtilization
+  EC2_MEASURES = %w(CPUUtilization NetworkIn NetworkOut DiskReadOps DiskWriteOps DiskReadBytes DiskWriteBytes)
+
+  # Available measures for RDS instances:
+  # CPUUtilization DatabaseConnections FreeStorageSpace
+  RDS_MEASURES = %w(CPUUtilization DatabaseConnections ReadIOPS WriteIOPS ReadLatency WriteLatency ReadThroughput WriteThroughput)
+  RDS_SPECIAL_MEASURES = %w(FreeStorageSpace)
+
 
   def build_report
-    aws_access_key = option(:aws_access_key)
-    aws_secret = option(:aws_secret)
-    dimension = option(:dimension)
-    namespace = option(:namespace)
+    aws_access_key  = option(:aws_access_key)
+    aws_secret      = option(:aws_secret)
+    dimension       = option(:dimension)
+    namespace       = option(:namespace)
+    @aws_access_key  = option(:aws_access_key)
+    @aws_secret      = option(:aws_secret)
 
-    # Available measures for EC2 instances:
-    # NetworkIn NetworkOut DiskReadOps DiskWriteOps DiskReadBytes DiskWriteBytes CPUUtilization
-    ec2_measures=%w(NetworkIn NetworkOut DiskReadOps DiskWriteOps DiskReadBytes DiskWriteBytes CPUUtilization)
+    return unless validate_namespace(namespace)
+    return unless validate_access_keys(@aws_access_key, @aws_secret)
+    return unless validate_dimension(dimension)
+
+    measures = calculate_measures(namespace)
+    @dimension_name, @dimension_value = calculate_dimensions(dimension, namespace)
+    @time, @start_time, @sample_period = calculate_times
     
-    # Available measures for RDS instances:
-    # CPUUtilization DatabaseConnections FreeStorageSpace
-    rds_measures=%w(CPUUtilization DatabaseConnections FreeStorageSpace ReadIOPS WriteIOPS ReadLatency WriteLatency ReadThroughput WriteThroughput)
-    namespaces = ['AWS/EC2', 'AWS/RDS']
-    
+    report_rds_storage if namespace == RDS_NAMESPACE
+    measures.each { |measure| report_aws_monitoring_data(namespace, measure) }
+  end  
+  
+  def validate_namespace(namespace)
+    namespaces = [EC2_NAMESPACE, RDS_NAMESPACE]
+
     unless namespaces.include? namespace
       error(:subject=>'Cloudwatch namespace not set', :body=>'Ensure your namespace is set in plugin options')
-      return
-    end
-    
-    measures = case namespace
-    when 'AWS/EC2' 
-      then ec2_measures
-    when 'AWS/RDS' 
-      then rds_measures
-    end
+      return false
+    end      
 
+    true
+  end
+  
+  def validate_access_keys(aws_access_key, aws_secret)
     # validate access keys
     if aws_access_key.to_s == '' or aws_secret.to_s == ''
       error(:subject=>'Cloudwatch AWS access not set', :body=>'Ensure your AWS access info is set in plugin options')
-      return
+      return false
     end
-
+    
+    true
+  end
+  
+  def validate_dimension(dimension)
     # validate dimension option
     if dimension.to_s == ''
       error(:subject=>'Cloudwatch options not set properly', :body=>'You need a value for InstanceID (dimension)')
-      return
-    elsif dimension.include? '='
-      dimension_name, dimension_value=dimension.split('=',2)
+      return false
+    end
+    true
+  end
+  
+  def calculate_measures(namespace)
+
+    measures = case namespace
+    when EC2_NAMESPACE
+      then EC2_MEASURES
+    when RDS_NAMESPACE
+      then RDS_MEASURES
+    end
+  end
+  
+  def calculate_dimensions(dimension, namespace)
+    if dimension.include? '='
+      dimension_name, dimension_value=dimension.split('=', 2)
     else
       dimension_name = case namespace
-      when 'AWS/EC2' 
+      when EC2_NAMESPACE
         then 'InstanceId'
-      when 'AWS/RDS' 
+      when RDS_NAMESPACE
         then 'DBInstanceIdentifier'
       end
       dimension_value=dimension
     end
-
-    aws = CloudWatch::AWSAuthConnection.new(aws_access_key, aws_secret)
-    # aws.verbose = true
     
+    return dimension_name, dimension_value
+  end
 
+  def calculate_times
     # Figure out a start and end time for the stats query. If we ran previously and remember the last_run_time,
     # then we just query from then to now. We also set the period to the DIFFERENCE so we only get one report during
     # that timeframe. Well, technically we make the period the closest multiple of 60 smaller than the difference,
@@ -79,59 +116,71 @@ class AwsCloudwatch < Scout::Plugin
     end
     remember(:last_run_time, time.to_s)
     
-    report_data={}
+    return time, start_time, sample_period
+  end
+  
+  def report_rds_storage
+    # calculate and report StorageSpace
+    rds = AWS::RDS::Base.new(:access_key_id => @aws_access_key, :secret_access_key => @aws_secret)
+    inst = rds.describe_db_instances(:db_instance_identifier => @dimension_value)
+    storage_space = inst.DescribeDBInstancesResult.DBInstances.DBInstance.AllocatedStorage.to_f * 1024 * 1024 * 1024
 
-    if namespace == "AWS/RDS"
-      rds = AWS::RDS::Base.new(:access_key_id => aws_access_key, :secret_access_key => aws_secret)
-      inst = rds.describe_db_instances(:db_instance_identifier => dimension_value)
-      storage_space = inst.DescribeDBInstancesResult.DBInstances.DBInstance.AllocatedStorage.to_f
-      report_data["StorageSpace"] = storage_space
-    end
+    report("StorageSpace" => storage_space)
+    
+    # calculate and report FreeStorageSpace, UsedStorageSpace, StorageSpace capacity
+    label, free_storage_space = report_aws_monitoring_data(EC2_NAMESPACE, "FreeStorageSpace")
 
-    # There will be one web service call for each measure
-    measures.each do |measure|
-      params = {
-        :StartTime => start_time.strftime(TIME_FORMAT),
-        :EndTime => time.strftime(TIME_FORMAT),
-        :MeasureName => measure,
-        :Period => sample_period.to_s,
-        :Namespace => namespace,
-        "Statistics.member.1" => "Average",
-        "Dimensions.member.1.Name" => dimension_name,
-        "Dimensions.member.1.Value" => dimension_value
-      }
-
-      # logger.debug ("getMetricStatistics with parameters: #{params.inspect}")
-      response = aws.getMetricStatistics(params)
-      # logger.debug response.structure      
-      # response looks like:
-      # ["CPUUtilization", [{:average=>"1.43", :timestamp=>"2009-08-16T06:40:00Z", :unit=>"Percent", :maximum=>"3.57", :samples=>"5.0"}]]
-      if response.is_error?
-        error(:subject=>"AWS CloudWatch Processing Error", :body=>"AWS getMetricStatistic error\n#{response.inspect}" )
-        return
-      end
-      label, stats = response.structure
-
-      if !stats.is_a?(Array) || stats.empty?
-        error(:subject=>"AWS CloudWatch Processing Error", :body=>"Something went wrong with AWS getMetricStatistics for measure: #{measure}, label #{label}\n#{response.inspect}" )
-        next
-      end
-      
-      stats = stats.first
-      
-      if label == "FreeStorageSpace"
-        stats[:average] = ((stats[:average].to_f / (1024 * 1024 * 1024))*100).floor / 100
-        used_storage_space = storage_space - stats[:average]
-
-        report_data["UsedStorageSpace"] = used_storage_space
-        report_data["StorageSpace capacity"] = used_storage_space / storage_space * 100
-      end
-
-      report_data[label] = stats[:average].to_f
+    if free_storage_space
+      used_storage_space = storage_space - free_storage_space.to_f
+      report("UsedStorageSpace" => used_storage_space)
+      report("StorageSpace capacity" => (used_storage_space / storage_space * 100 * 100).floor * 0.01)
     end
     
-    report(report_data) 
   end
+  
+  def report_aws_monitoring_data(namespace, measure)
+    @aws ||= CloudWatch::AWSAuthConnection.new(@aws_access_key, @aws_secret)
+    # aws.verbose = true
+    # There will be one web service call for each measure
+    
+    params = {
+      :StartTime                  => @start_time.strftime(TIME_FORMAT),
+      :EndTime                    => @time.strftime(TIME_FORMAT),
+      :MeasureName                => measure,
+      :Period                     => @sample_period.to_s,
+      :Namespace                  => namespace,
+      "Statistics.member.1"       => "Average",
+      "Dimensions.member.1.Name"  => @dimension_name,
+      "Dimensions.member.1.Value" => @dimension_value
+    }
+
+    response=nil
+    3.times do
+      response = @aws.getMetricStatistics(params)
+      # response looks like:
+      # ["CPUUtilization", [{:average=>"1.43", :timestamp=>"2009-08-16T06:40:00Z", :unit=>"Percent", :maximum=>"3.57", :samples=>"5.0"}]]
+      
+      next if response.is_error? 
+      
+      label, stats = response.structure.first, response.structure.last
+      
+      next if !stats.is_a?(Array) || stats.empty?
+      
+      value = stats.first[:average].to_f
+      
+      report(label => value)
+      return label, value
+    end
+    
+    if response.is_error?
+      error(:subject=>"AWS CloudWatch Processing Error", :body=>"Got AWS getMetricStatistic error for measure #{params[:MeasureName]}\n#{response.inspect}")
+    else 
+      error(:subject=>"AWS CloudWatch Processing Error", :body=>"Something went wrong with AWS getMetricStatistics for label #{params[:MeasureName]}\n#{response.inspect}")
+    end
+
+    return nil, nil
+  end  
+  
 end
 
 
