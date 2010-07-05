@@ -128,7 +128,7 @@ class AwsCloudwatch < Scout::Plugin
     report("StorageSpace" => storage_space)
     
     # calculate and report FreeStorageSpace, UsedStorageSpace, StorageSpace capacity
-    label, free_storage_space = report_aws_monitoring_data(EC2_NAMESPACE, "FreeStorageSpace")
+    label, free_storage_space = report_aws_monitoring_data(RDS_NAMESPACE, "FreeStorageSpace")
 
     if free_storage_space
       used_storage_space = storage_space - free_storage_space.to_f
