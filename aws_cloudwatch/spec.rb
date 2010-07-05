@@ -107,7 +107,7 @@ describe "AwsCloudwatch - Usual RDS execution " do
     AwsCloudwatch::RDS_MEASURES.each do |label|
       # eval options label and average_value
       @random_label_values[label] = average_value = Kernel.rand(100000*10)*0.1
-      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?#{label}|, :body => eval(MONITOR_RESPONSE))
+      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FRDS|, :body => eval(MONITOR_RESPONSE))
     end
 
     # special value for RDS
@@ -119,7 +119,7 @@ describe "AwsCloudwatch - Usual RDS execution " do
 
     label = 'FreeStorageSpace'
     @random_label_values[label] = average_value = ( (100-used_capacity) / 100 * storage_space * 1024 * 1024 * 1024 ).floor
-    FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?#{label}|, :body => eval(MONITOR_RESPONSE))
+    FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FRDS|, :body => eval(MONITOR_RESPONSE))
 
     plugin.build_report
     @report_hash = plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
@@ -196,7 +196,7 @@ describe "AwsCloudwatch - RDS execution with empty result or error" do
         end  
       end
       
-      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?#{label}|, fake_web_options)
+      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FRDS|, fake_web_options)
     end
 
     average_value = 1
@@ -242,7 +242,7 @@ describe "AwsCloudwatch - Usual EC2 execution " do
     AwsCloudwatch::EC2_MEASURES.each do |label|
       # eval options label and average_value
       @random_label_values[label] = average_value = Kernel.rand(100000*10)*0.1
-      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?#{label}|, :body => eval(MONITOR_RESPONSE))
+      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, :body => eval(MONITOR_RESPONSE))
     end
 
     plugin.build_report
@@ -307,7 +307,7 @@ describe "AwsCloudwatch - EC2 execution with empty result or error" do
         end  
       end
       
-      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?#{label}|, fake_web_options)
+      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
     end
 
     plugin.build_report
