@@ -47,15 +47,15 @@ metadata:
     precision: 0
   FreeStorageSpace:
     label: Free Storage Space
-    units: Gbytes
+    units: bytes
     precision: 0
   UsedStorageSpace:
     label: Used Storage Space
-    units: Gbytes
+    units: bytes
     precision: 0
   StorageSpace:
     label: Storage Space
-    units: Gbytes
+    units: bytes
     precision: 0
   StorageSpace capacity:
     label: Storage Space capacity
