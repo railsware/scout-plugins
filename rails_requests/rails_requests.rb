@@ -15,6 +15,10 @@ class RailsRequests < Scout::Plugin
     name: Max Request Length (sec)
     notes: If any request length is larger than this amount, an alert is generated (see Advanced for more options)
     default: 3
+  max_memory_diff:
+    name: Max Memory Difference (MB)
+    notes: If any request results in a change in memory larger than this amount, an alert is generated. The Oink plugin must be installed in your Rails application.
+    default: 50
   rla_run_time:
     name: Request Log Analyzer Run Time (HH:MM)
     notes: It's best to schedule these summaries about fifteen minutes before any logrotate cron job you have set would kick in. The time should be in the server timezone.
@@ -34,143 +38,65 @@ class RailsRequests < Scout::Plugin
   def build_report
     patch_elif
 
-    log_path = option(:log)
-    unless log_path and not log_path.empty?
+    @log_path = option(:log)
+    unless @log_path and not @log_path.empty?
       @file_found = false
       return error("A path to the Rails log file wasn't provided.","Please provide the full path to the Rails log file to analyze (ie - /var/www/apps/APP_NAME/log/production.log)")
     end
-    max_length = option(:max_request_length).to_f
-
-    # process the ignored_actions option -- this is a regex provided by users; matching URIs don't get counted as slow
-    ignored_actions=nil
-    if option(:ignored_actions) && option(:ignored_actions).strip != ''
-      begin
-        ignored_actions = Regexp.new(option(:ignored_actions))
-      rescue
-        error("Argument error","Could not understand the regular expression for excluding slow actions: #{option(:ignored_actions)}. #{$!.message}")
-      end
+    unless File.exist?(@log_path)
+      @file_found = false
+      return error("Unable to find the Rails log file", "Could not find a Rails log file at: #{option(:log)}. Please ensure the path is correct.")
     end
     
-    # set the rails version for use with parsing. if none provided, defaults to rails2.
-    rails_version = option(:rails_version)
-    rails_version = rails_version.to_s[0..0].to_i
+    @max_length = option(:max_request_length).to_f
+    @max_memory_diff = option(:max_memory_diff) ? option(:max_memory_diff).to_f : nil
+    
+    init_ignored_actions # sets @ignored_actions@
+    init_parser # sets @file_format    
+    init_tracking # data the plugin tracks
+    init_file_pointer # sets @previous_position
+    init_previous_last_request_time # sets @previous_last_request_time, @previous_last_request_time_as_timestamp
+    
+    test_parsing if option(:log_test) # parses a big chunk of the log file if true (ignores previous position)
 
-    load_format = case rails_version
-              when 0 # none provided - use Rails2
-                :rails
-              when 2
-                :rails
-              when 3
-                :rails3
-              else
-                :rails
-              end
-              
-    @format= RequestLogAnalyzer::FileFormat.load(load_format)
-
-    report_data        = { :slow_request_rate      => 0,
-                           :request_rate           => 0,
-                           :average_request_length => nil,
-                           :average_db_time        => nil,
-                           :average_view_time      => nil }
-    slow_request_count = 0
-    request_count      = 0
-    last_completed     = nil
-    slow_requests      = ''
-    total_request_time = 0.0
-    total_view_time    = 0.0
-    total_db_time      = 0.0
-    previous_last_request_time = memory(:last_request_time) || Time.now-60 # analyze last minute on first invocation
-    if option(:log_test)
-      previous_last_request_time = Time.now-(60*60*24*300)
-    end
-    # Time#parse is slow so uses a specially-formatted integer to compare request times.
-    previous_last_request_time_as_timestamp = previous_last_request_time.strftime('%Y%m%d%H%M%S').to_i
-    # set to the time of the first request processed (the most recent chronologically)
+    # set to the time of the last request processed. the next run will start parsing requests later requests.
     last_request_time  = nil
+    # the updated file position will be saved for the next run.
+    last_file_position = nil
+    
+    # for dev debugging
+    skipped_requests_count = 0
+    
     # needed to ensure that the analyzer doesn't run if the log file isn't found.
     @file_found        = true
-    
-    # Get RLA's line definitions. We'll use this to parse each line. 
-    completed_line_def  = @format.line_definitions[:completed]
-    processing_line_def = @format.line_definitions[:processing]
-    started_line_def    = @format.line_definitions[:started] # will be nil with Rails2
-    request             = @format.request
-
-    time_of_request = nil
-    started = {}
-    last_completed_line = ''
-
-    # read backward, counting lines
-    Elif.foreach(log_path) do |line|
-      if matches = completed_line_def.matches(line)
-        last_completed_line = line
-        last_completed = completed_line_def.convert_captured_values(matches[:captures],request) # returns a hash, see RequestLogAnalyzer::LineDefinition
-      elsif last_completed and started_line_def and matches = started_line_def.matches(line) # In Rails3, timestamp is in :started line
-        started = started_line_def.convert_captured_values(matches[:captures],request)
-        time_of_request = started[:timestamp]
-      elsif last_completed and matches = processing_line_def.matches(line) # In Rails3, timestamp is in :processing line
-        processing = processing_line_def.convert_captured_values(matches[:captures],request) # returns a hash, see RequestLogAnalyzer::LineDefinition
-        time_of_request = processing[:timestamp]
-      end
-
-      if time_of_request
-        last_request_time = time_of_request if last_request_time.nil?
-        if time_of_request <= previous_last_request_time_as_timestamp
-          break
+    File.open(@log_path, 'rb') do |f| 
+      # seek to the last position in the log file
+      f.seek(@previous_position, IO::SEEK_SET)      
+      # use the log parser to build requests from the lines.
+      @log_parser.parse_io(f) do |request|
+        # store the last file position and timestamp of the last request processed.
+        last_request_time = request[:timestamp]
+        # don't process requests if they are before the last request processed.
+        if request[:timestamp] <= @previous_last_request_time_as_timestamp
+          skipped_requests_count += 1
         else
-          request_count += 1            
-          total_request_time     += last_completed[:duration]
-          total_view_time        += (last_completed[:view] || 0.0)
-          total_db_time          += (last_completed[:db] || 0.0) 
-          if max_length > 0 and last_completed[:duration] > max_length
-            # url is in :completed in rails2; path is in :started in rails3
-            url= last_completed[:url] || started[:path]
-            # only test for ignored_actions if we actually have an ignored_actions regex
-            if ignored_actions.nil? || (ignored_actions.is_a?(Regexp) && !ignored_actions.match(url))
-              slow_request_count += 1                
-              slow_requests      += "#{url}\n#{last_completed_line.split('[').first}\n\n"
-            end
-          end
-        end # request should be analyzed
-        time_of_request = nil
-      end
-    end
-
-    # Create a single alert that holds all of the requests that exceeded the +max_request_length+.
-    if (count = slow_request_count) > 0
-      alert( "Maximum Time(#{option(:max_request_length)} sec) exceeded on #{count} request#{'s' if count != 1}",
-             slow_requests )
-    end
-    # Calculate the average request time and request rate if there are any requests
-    if request_count > 0
-      # calculate the time btw runs in minutes
-      # this is used to generate rates.
-      interval = (Time.now-(@last_run || previous_last_request_time))
-
-      interval < 1 ? inteval = 1 : nil # if the interval is less than 1 second (may happen on initial run) set to 1 second
-      interval = interval/60 # convert to minutes
-      interval = interval.to_f
-      # determine the rate of requests and slow requests in requests/min
-      request_rate                         = request_count /
-                                             interval
-      report_data[:request_rate]           = sprintf("%.2f", request_rate)
-      
-      slow_request_rate                    = slow_request_count /
-                                             interval
-      report_data[:slow_request_rate]      = sprintf("%.2f", slow_request_rate)
-      
-      # determine the average times for the whole request, db, and view
-      report_data[:average_request_length] = sprintf("%.2f", total_request_time / request_count)
-      report_data[:average_db_time] = sprintf("%.2f", total_view_time / request_count)
-      report_data[:average_view_time] = sprintf("%.2f", total_db_time / request_count)
-
-      report_data[:slow_requests_percentage] = (request_count == 0) ? 0 : (slow_request_count.to_f / request_count.to_f) * 100.0
-
-    end
+          completed_line = request.has_line_type?(:completed)
+          next if completed_line.nil? # request could be a failure. if so, no metrics to parse.
+          parse_request(request)
+        end
+        
+      end # parse_io
+    
+    end # File.open
+    
+    generate_slow_request_alerts
+    generate_memory_leak_alerts
+    
     remember(:last_request_time, Time.parse(last_request_time.to_s) || Time.now)
-    report(report_data)
+
+    report(aggregate)
   rescue Errno::ENOENT => e
+    # TODO - Is this needed anymore with the File.exist? check?
     @file_found = false
     error("Unable to find the Rails log file", "Could not find a Rails log file at: #{option(:log)}. Please ensure the path is correct. \n\n#{e.message}")
   rescue Exception => e
@@ -179,11 +105,190 @@ class RailsRequests < Scout::Plugin
     # only run the analyzer if the log file is provided
     # this may take a couple of minutes on large log files.
     if @file_found and option(:log) and not option(:log).empty?
-      generate_log_analysis(log_path)
+      generate_log_analysis(@log_path)
     end
   end
   
   private
+
+  # Process the ignored_actions option -- this is a regex provided by users; matching URIs don't get counted as slow.
+  # Actions are stored in +@ignored_actions+. If the RegEx cannot be generated, an Argument Error is created.
+  def init_ignored_actions
+    @ignored_actions=nil
+    if option(:ignored_actions) && option(:ignored_actions).strip != ''
+      begin
+        @ignored_actions = Regexp.new(option(:ignored_actions))
+      rescue
+        error("Argument error","Could not understand the regular expression for excluding slow actions: #{option(:ignored_actions)}. #{$!.message}")
+      end
+    end
+  end
+  
+  # Set the RLA rails format to +@file_format+ and inits the log parser (@log_parser). If none provided, defaults to Oink (which is v2).
+  def init_parser
+    set_file_format_class
+    # will use minimal line collection for incremental parsing. using more line collections increases
+    # parsing time. 
+    if @file_format_class == RequestLogAnalyzer::FileFormat::Rails or @file_format_class.superclass == RequestLogAnalyzer::FileFormat::Rails
+      @file_format = @file_format_class.create('minimal')  
+    else # Rails3 doesn't have option of minimal processing
+      @file_format = @file_format_class.create
+    end
+    @log_parser  = RequestLogAnalyzer::Source::LogParser.new(@file_format, :parse_strategy => 'cautious')
+  end
+  
+  # Need the class for incremental parsing and the daily report. 
+  # Incremental uses a minimal parsing strategy for performance - the daily report does not.
+  def set_file_format_class
+    rails_version = option(:rails_version)
+    rails_version = rails_version.to_s[0..0].to_i
+    @file_format_class = case rails_version
+              when 2
+                RequestLogAnalyzer::FileFormat::Oink
+              when 3
+                # TODO - Add Oink processing for Rails3 files
+                RequestLogAnalyzer::FileFormat::Rails3
+              else
+                RequestLogAnalyzer::FileFormat::Oink
+              end
+  rescue LoadError # Oink format not available on RLA < 1.8
+    @file_format_class = RequestLogAnalyzer::FileFormat::Rails
+  end
+  
+  # Inits data the plugin tracks, ie slow request count, slow requests, etc
+  def init_tracking
+    @slow_request_count     = 0
+    @request_count          = 0
+    @last_completed         = nil
+    @slow_requests          = ''
+    @leaking_requests_count = 0
+    @leaking_requests       = ''
+    @total_request_time     = 0.0
+    @total_view_time        = 0.0
+    @total_db_time          = 0.0
+  end
+  
+  # seeks to the previous file pointer position in the log file. saves the new previous position for the 
+  # next run.
+  # - if no previous position exists, sets the file pointer to the end of the file - MAX_READ_SIZE
+  # - for logrotate, if the previous position is greater than the current one, sets the position to 0
+  #   to start with the fresh file.
+  def init_file_pointer
+    @previous_position  = memory(:previous_position)
+    current_position    = `wc -c #{@log_path}`.split(' ')[0].to_i
+    remember(:previous_position,current_position)
+    if @previous_position and current_position < @previous_position
+      # log file rotated - set position to zero
+      @previous_position = 0
+    elsif @previous_position.nil?
+      # first run
+      @previous_position = current_position - File::MAX_READ_SIZE
+      @previous_position < 0 ? @previous_position = 0 : nil
+    end    
+  end
+  
+  # sets @previous_last_request_time, @previous_last_request_time_as_timestamp
+  def init_previous_last_request_time    
+    @previous_last_request_time = memory(:last_request_time) || Time.now-60 # analyze last minute on first invocation
+    # Time#parse is slow so uses a specially-formatted integer to compare request times.
+    @previous_last_request_time_as_timestamp = @previous_last_request_time.strftime('%Y%m%d%H%M%S').to_i
+  end
+  
+  # Calculates data to report 
+  def aggregate
+    report_data        = { :slow_request_rate      => 0,
+                           :request_rate           => 0,
+                           :average_request_length => nil,
+                           :average_db_time        => nil,
+                           :average_view_time      => nil }
+  
+    # Calculate the average request time and request rate if there are any requests
+    if @request_count > 0
+     interval = set_interval
+     
+     # determine the rate of requests and slow requests in requests/min
+     report_data[:request_rate]           = average(@request_count,interval)
+     report_data[:slow_request_rate]      = average(@slow_request_count,interval)
+
+     # determine the average times for the whole request, db, and view
+     report_data[:average_request_length] = average(@total_request_time,@request_count)
+     report_data[:average_db_time]        = average(@total_view_time,@request_count)
+     report_data[:average_view_time]      = average(@total_db_time,@request_count)
+
+     report_data[:slow_requests_percentage] = (@request_count == 0) ? 0 : (@slow_request_count.to_f / @request_count.to_f) * 100.0
+    end
+    return report_data
+  end
+  
+  # Given a total and a count, returns a string-formatted average 
+  def average(total,count)
+    avg = total/count
+    sprintf("%.2f", avg)
+  end
+  
+  # calculate the time btw runs in minutes
+  # this is used to generate rates.
+  def set_interval
+    interval = (Time.now-(@last_run || @previous_last_request_time))
+
+    interval < 1 ? inteval = 1 : nil # if the interval is less than 1 second (may happen on initial run) set to 1 second
+    interval = interval/60 # convert to minutes
+    interval = interval.to_f
+  end
+  
+  # Will parse a big chunk of the log file when these are set. This method if called if
+  # option(:log_test) = true.
+  def test_parsing
+    @previous_position          = 0
+    @previous_last_request_time = Time.now-(60*60*24*300)
+    @previous_last_request_time_as_timestamp = @previous_last_request_time.strftime('%Y%m%d%H%M%S').to_i
+  end
+  
+  def parse_request(request)
+    @request_count += 1  
+    url= request[:url] || request[:path]
+    
+    parse_timing(request,url)
+    parse_memory(request,url)
+  end
+  
+  def parse_timing(request,url)
+    @total_request_time     += request[:duration]
+    @total_view_time        += (request[:view] || 0.0)
+    @total_db_time          += (request[:db] || 0.0) 
+    if @max_length > 0 and request[:duration] > @max_length
+      # url is in :completed in rails2; path is in :started in rails3
+      # only test for ignored_actions if we actually have an ignored_actions regex
+      if @ignored_actions.nil? || (@ignored_actions.is_a?(Regexp) && !@ignored_actions.match(url))
+        @slow_request_count += 1                
+        @slow_requests += "#{url}\nCompleted in #{request[:duration]}s (View: #{request[:view]}s, DB: #{request[:db]}s) | Status: #{request[:status]}\n\n"
+      end
+    end
+  end
+  
+  def parse_memory(request,url)
+    # memory_diff is in bytes ... max_memory_diff in MB
+    if @max_memory_diff and diff=request[:memory_diff] and diff > @max_memory_diff*1024*1024
+      @leaking_requests_count +=1
+      @leaking_requests += "#{url}\nMemory Increase: #{diff / 1024 / 1024} MB | Status: #{request[:status]}\n\n"
+    end 
+  end
+  
+  def generate_slow_request_alerts
+    # Create a single alert that holds all of the requests that exceeded the +max_request_length+.
+    if (count = @slow_request_count) > 0
+      alert( "Maximum Time(#{option(:max_request_length)} sec) exceeded on #{count} request#{'s' if count != 1}",
+             @slow_requests )
+    end
+  end
+  
+  def generate_memory_leak_alerts
+    # Create a single alert that holds all of the requests that exceeded the +max_memory_diff+.
+    if (count = @leaking_requests_count) > 0
+      alert( "Maximum Memory Increase(#{@max_memory_diff} MB) exceeded on #{count} request#{'s' if count != 1}",
+             @leaking_requests )
+    end
+  end
 
   # Time.parse is slow...uses this to compare times.
   def convert_timestamp(value)
@@ -254,7 +359,7 @@ class RailsRequests < Scout::Plugin
     summary  = StringIO.new
     output   = EmbeddedHTML.new(summary)
     options  = {:source_files => log_file, :output => output}
-    source   = RequestLogAnalyzer::Source::LogParser.new(@format, options)
+    source   = RequestLogAnalyzer::Source::LogParser.new(@file_format_class, options)
     control  = RequestLogAnalyzer::Controller.new(source, options)
     control.add_filter(:timespan, :after  => last_summary)
     control.add_filter(:timespan, :before => stop_time)
@@ -275,7 +380,7 @@ class RailsRequests < Scout::Plugin
       :after        => last_summary, 
       :before       => stop_time,
       :source_files => log_file,
-      :format       => @format
+      :format       => @file_format_class
     ).run!
     summary.string.strip
   end
@@ -315,6 +420,14 @@ class RailsRequests < Scout::Plugin
       @io << str
     end
     alias_method :<<, :print
+    
+    def colorize(text, *style)
+      if style.include?(:bold)
+        tag(:strong, text)
+      else
+        text
+      end
+    end
   
     def puts(str = "")
       @io << "#{str}<br/>\n"
@@ -463,13 +576,13 @@ class File
         
     # Record where we are.
     @current_pos ||= pos
-    
+        
     # Last Position in the file
     @last_pos ||= nil
     if @last_pos.nil? 
       seek(0, IO::SEEK_END)
       @last_pos = pos
-      seek(0,0)
+      seek(@current_pos,IO::SEEK_SET) # back to the original position
     end
     
     # 
