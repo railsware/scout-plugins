@@ -15,6 +15,9 @@ class MonitorDelayedJobs < Scout::Plugin
   
   needs 'active_record', 'yaml', 'erb'
 
+  # IMPORTANT! Requiring Rubygems is NOT a best practice. See http://scoutapp.com/info/creating_a_plugin#libraries
+  # This plugin is an exception because we to subclass ActiveRecord::Base before the plugin's build_report method is run.
+  require 'rubygems' 
   require 'active_record'
   class DelayedJob < ActiveRecord::Base; end
   

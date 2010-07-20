@@ -1,3 +1,5 @@
+$VERBOSE=false
+
 class ResqueStats < Scout::Plugin
 
   needs 'redis', 'resque'
