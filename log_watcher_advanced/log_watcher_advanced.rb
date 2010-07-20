@@ -46,7 +46,6 @@ class LogWatcherAdvanced < Scout::Plugin
     value = 0
 
     # don't run it the first time
-    puts "last_run", last_run
     if (read_length > 0 )
       value  = eval(%Q[`tail -c +#{last_run} #{@log_file_path} | head -c #{read_length} | #{@value_pipe}`]).strip
       errors = eval(%Q[`tail -c +#{last_run} #{@log_file_path} | head -c #{read_length} | #{@error_pipe}`]).strip unless @error_pipe.empty?
