@@ -2,17 +2,22 @@ class RedisMonitor < Scout::Plugin
   needs 'redis', 'yaml'
 
   OPTIONS = <<-EOS
+  client_host:
+    name: Host
+    notes: "You will generally want this to be 'localhost'"
+    default: localhost
   client_port:
     name: Port
     notes: Redis port to pass to the client library.
     default: 6379
-  client_db:
+  db:
     name: Database
     notes: Redis database ID to pass to the client library.
     default: 0
-  client_password:
+  password:
     name: Password
     notes: If you're using Redis' password authentication.
+    attributes: password
   lists:
     name: Lists to monitor
     notes: A comma-separated list of list keys to monitor the length of.
@@ -24,7 +29,8 @@ class RedisMonitor < Scout::Plugin
   def build_report
     redis = Redis.new :port     => option(:client_port),
                       :db       => option(:db),
-                      :password => option(:password)
+                      :password => option(:password),
+                      :host     => options(:client_host)
     begin
       info = redis.info
     rescue Errno::ECONNREFUSED => error

@@ -1,18 +1,29 @@
-# 
 # Created by Eric Lindvall <eric@5stops.com>
-#
-
-require 'set'
 
 class MysqlQueryStatistics < Scout::Plugin
-  
-  # needs "mysql"
-  attr_accessor :run_time
-  
-  def initialize(last_run, memory, options)
-    @run_time = Time.now
-    super
-  end
+  ENTRIES = %w(Com_insert Com_select Com_update Com_delete)
+
+  OPTIONS=<<-EOS
+  user:
+    name: MySQL username
+    notes: Specify the username to connect with
+    default: root
+  password:
+    name: MySQL password
+    notes: Specify the password to connect with
+  host:
+    name: MySQL host
+    notes: Specify something other than 'localhost' to connect via TCP
+    default: localhost
+  port:
+    name: MySQL port
+    notes: Specify the port to connect to MySQL with (if nonstandard)
+  socket:
+    name: MySQL socket
+    notes: Specify the location of the MySQL socket
+  EOS
+
+  needs "mysql"
 
   def build_report
     # option_value returns nil if the option value is blank
@@ -43,10 +54,17 @@ class MysqlQueryStatistics < Scout::Plugin
       append_value_to_report(key, value, report_hash) if sequential_entries.include?(key)
       report_hash[key] = value if absolute_entries.include?(key)
 
-      total += value if key =~ /^Com_/ # Com_insert Com_select Com_update Com_delete
+    report_hash = {}
+    rows.each do |row|
+      name = row.first[/_(.*)$/, 1]
+      value = counter(now, name, row.last.to_i)
+      # only report if a value is calculated
+      next unless value
+      report_hash[name] = value
     end
 
-    append_value_to_report('total', total, report_hash)
+    total_val = counter(now, 'total', total)
+    report_hash['total'] = total_val if total_val
     
     report(report_hash)
   end
@@ -59,37 +77,8 @@ class MysqlQueryStatistics < Scout::Plugin
   # Returns nil if an empty string
   def option_value(opt_name)
     val = option(opt_name)
-    val = (val.is_a?(String) and val.strip == '') ? nil : val
-    return val
+    return (val.is_a?(String) and val.strip == '') ? nil : val
   end
-  
-  # Note this calculates the difference between the last run and the current run.
-  def calculate_counter(name, value, current_time=nil)
-    current_time ||= run_time()
-    result = nil
-    # only check if a past run has a value for the specified query type
-    if memory(name) && memory(name).is_a?(Hash)
-      last_time, last_value = memory(name).values_at(:time, :value)
-      # We won't log it if the value has wrapped
 
-      if last_value and value >= last_value
-        elapsed_seconds = current_time - last_time
-        elapsed_seconds = 1 if elapsed_seconds < 1
-        result = value - last_value
-
-        # calculate per-second
-        result = result / elapsed_seconds.to_f
-      end
-    end
-    remember(name => {:time => current_time, :value => value})
-    
-    result
-  end
-  
-  def append_value_to_report(name, value, report, current_time=nil)
-    current_time ||= run_time()
-    squence_value = calculate_counter(name, value, current_time)
-    report[name] = squence_value if squence_value
-  end
 end
 

@@ -5,11 +5,11 @@ require 'mongo'
 class MongoOverviewTest < Test::Unit::TestCase
   
   def setup
-    @options=parse_defaults("mongo_stats")
+    @options=parse_defaults("mongo_overview")
     Mongo::Connection.any_instance.stubs(:initialize).returns(Mongo::DB.new('localhost','27017'))
   end
   
-  def test_should_error_without_yaml_file
+  def test_should_error_without_yaml_file_and_connection_options
     plugin=MongoOverview.new(nil,{},@options)
     res=plugin.run
     assert res[:errors].first[:subject] =~ /not provided/
@@ -21,40 +21,50 @@ class MongoOverviewTest < Test::Unit::TestCase
     assert res[:errors].first[:subject] =~ /Unable to find/
   end
   
+  def test_should_error_without_database
+    plugin=MongoOverview.new(nil,{},@options)
+    res=plugin.run
+    assert res[:errors].first[:subject] =~ /not provided/
+  end
+  
   def test_should_parse_stats    
-    opts = @options.merge({:path_to_db_yml => File.dirname(__FILE__)+'/fixtures/database.yml'})
-    plugin=MongoOverview.new(nil,{},opts)
-    Mongo::DB.any_instance.stubs(:stats).returns(STATS)
-    Mongo::DB.any_instance.stubs(:command).with('serverStatus' => 1).returns(SERVER_STATUS)
+    # try w/database.yml file and provided options
+    [{:path_to_db_yml => File.dirname(__FILE__)+'/fixtures/database.yml'},
+     {:database => 'test', :host => 'localhost', :port => '27017'}].each do |option_set|
+      opts = @options.merge(option_set)
+      plugin=MongoOverview.new(nil,{},opts)
+      Mongo::DB.any_instance.stubs(:stats).returns(STATS)
+      Mongo::DB.any_instance.stubs(:command).with('serverStatus' => 1).returns(SERVER_STATUS)
     
-    # 10 minutes in the past
-    time = Time.now
-    Timecop.travel(time-60*10) do     
-      res=plugin.run
-      assert_equal STATS['objects'], res[:reports].find { |r| r.keys.include?(:objects)}[:objects]
-      assert_nil res[:reports].find { |r| r.keys.include?(:btree_miss_ratio)}
-      first_run_memory = res[:memory]    
-      assert_equal SERVER_STATUS['globalLock']['totalTime'], 
-                   first_run_memory[:global_lock_total_time]
+      # 10 minutes in the past
+      time = Time.now
+      Timecop.travel(time-60*10) do     
+        res=plugin.run
+        assert_equal STATS['objects'], res[:reports].find { |r| r.keys.include?(:objects)}[:objects]
+        assert_nil res[:reports].find { |r| r.keys.include?(:btree_miss_ratio)}
+        first_run_memory = res[:memory]    
+        assert_equal SERVER_STATUS['globalLock']['totalTime'], 
+                     first_run_memory[:global_lock_total_time]
     
-      # 2nd run, 10 minutes later, to test counters. 
-      Timecop.travel(time) do 
-        Mongo::DB.any_instance.stubs(:command).with('serverStatus' => 1).returns(SERVER_STATUS_2ND_RUN)
-        plugin=MongoOverview.new(time-60*10,first_run_memory,opts)
-        res=plugin.run()
+        # 2nd run, 10 minutes later, to test counters. 
+        Timecop.travel(time) do 
+          Mongo::DB.any_instance.stubs(:command).with('serverStatus' => 1).returns(SERVER_STATUS_2ND_RUN)
+          plugin=MongoOverview.new(time-60*10,first_run_memory,opts)
+          res=plugin.run()
         
-        # check the global_lock_ratio
-        assert_equal 10.0/100.0, 
-                     res[:reports].find { |r| r.keys.include?(:global_lock_ratio)}[:global_lock_ratio]
+          # check the global_lock_ratio
+          assert_equal 10.0, 
+                       res[:reports].find { |r| r.keys.include?(:global_lock_ratio)}[:global_lock_ratio]
       
-        # check btree hit ratio
-        assert_equal 0.1, res[:reports].find { |r| r.keys.include?(:btree_miss_ratio)}[:btree_miss_ratio]
+          # check btree hit ratio
+          assert_equal 10.0, res[:reports].find { |r| r.keys.include?(:btree_miss_ratio)}[:btree_miss_ratio]
         
-        # check rate for btree hits
-        assert_in_delta 10.0/(10*60), 
-                           res[:reports].find { |r| r.keys.include?(:btree_hits)}[:btree_hits], 0.001        
-      end # timecop
-    end
+          # check rate for btree hits
+          assert_in_delta 10.0/(10*60), 
+                             res[:reports].find { |r| r.keys.include?(:btree_hits)}[:btree_hits], 0.001        
+        end # timecop
+      end
+    end # testing each option set
   
   end
   
