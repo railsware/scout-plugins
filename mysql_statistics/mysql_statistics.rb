@@ -56,7 +56,10 @@ class MysqlStatistics < Scout::Plugin
 
     cmd = %Q[#{mysql} --execute="#{query.gsub(/"/,'\"')}" --user="#{user}" --host="#{host}" --port="#{port}" --password="#{password}" --socket="#{socket}" | tail -n +2]
     
-    output, error = Open3.popen3(cmd) { |stdin, stdout, stderr| [stdout.gets.chomp, stderr.gets.chomp] }
+    output, error = Open3.popen3(cmd) { |stdin, stdout, stderr| [stdout.gets, stderr.gets] }
+
+    output.chomp! if output
+    error.chomp! if error
     
     error = "no result was retreived by the command : \n#{cmd}" if (output.nil? || output.empty?) && (error.nil? || error.empty?)
 
