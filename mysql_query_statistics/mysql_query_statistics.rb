@@ -26,33 +26,24 @@ class MysqlQueryStatistics < Scout::Plugin
   needs "mysql"
 
   def build_report
-    # option_value returns nil if the option value is blank
-    mysql              = 'mysql'
-    user               = option_value(:user) || 'root'
-    password           = option_value(:password)
-    host               = option_value(:host)
-    port               = option_value(:port)
-    socket             = option_value(:socket)
-    sequential_entries = option(:sequential_entries).to_s.strip.split(' ').to_set
-    absolute_entries   = option(:absolute_entries).to_s.strip.split(' ').to_set
-    query              = 'SHOW /*!50002 GLOBAL */ STATUS'
-
-    # mysql = Mysql.connect(host, user, password, nil, (port.nil? ? nil : port.to_i), socket)
-    # result = mysql.query('SHOW /*!50002 GLOBAL */ STATUS')
-
-    cmd = %Q[`#{mysql} --execute="#{query.gsub(/"/,'\"')}" --user="#{user}" --host="#{host}" --port="#{port}" --password="#{password}" --socket="#{socket}"`]
+    # get_option returns nil if the option value is blank
+    user     = get_option(:user) || 'root'
+    password = get_option(:password)
+    host     = get_option(:host)
+    port     = get_option(:port)
+    socket   = get_option(:socket)
     
-    result = eval(cmd).split("\n")[1..-1]
-    
-    report_hash = {}
-
+    now = Time.now
+    mysql = Mysql.connect(host, user, password, nil, (port.nil? ? nil : port.to_i), socket)
+    result = mysql.query('SHOW /*!50002 GLOBAL */ STATUS')
+    rows = []
     total = 0
     result.each do |row| 
-      key, value = row.split("\t")
-      value = value.to_i
-      
-      append_value_to_report(key, value, report_hash) if sequential_entries.include?(key)
-      report_hash[key] = value if absolute_entries.include?(key)
+      rows << row if ENTRIES.include?(row.first)
+
+      total += row.last.to_i if row.first[0..3] == 'Com_'
+    end
+    result.free
 
     report_hash = {}
     rows.each do |row|
@@ -68,14 +59,11 @@ class MysqlQueryStatistics < Scout::Plugin
     
     report(report_hash)
   end
-  
-  def test(a)
-  end
-  
+
   private
   
   # Returns nil if an empty string
-  def option_value(opt_name)
+  def get_option(opt_name)
     val = option(opt_name)
     return (val.is_a?(String) and val.strip == '') ? nil : val
   end

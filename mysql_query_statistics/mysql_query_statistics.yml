@@ -1,45 +1,28 @@
 metadata:
-  Com_select:
+  select:
     label: Select Queries
     units: /sec
-  Com_delete:
+  delete:
     label: Delete Queries
     units: /sec
-  Com_update:
+  update:
     label: Update Queries
     units: /sec
-  Com_insert:
+  insert:
     label: Insert Queries
     units: /sec
-  Com_replace:
+  replace:
     label: Replace Queries
     units: /sec
   total:
     label: Total Queries
     units: /sec
-  Slow_queries:
-    label: Slow Queries
-    units: /sec
-  Select_scan:
-    label: Select Scan
-    units: /sec
-  Sort_rows:
-    label: Sort Rows
-    units: /sec
-  Sort_scan:
-    label: Sort scan
-    units: /sec
-  Created_tmp_disk_tables:
-    label: Created tmp disk tables
-    units: /sec
-  Innodb_buffer_pool_pages_dirty:
-    label: Innodb buffer pool pages dirty
-    units: pages
 
 triggers:    
   - type: trend
     data_series_name: total
+    min_value: 50.0
     direction: UP                            
-    percentage_change: 30                    
-    duration: 60                           
+    percentage_change: 100
+    duration: 180                           
     window_reference: LAST_WEEK
