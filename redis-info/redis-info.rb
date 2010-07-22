@@ -30,7 +30,7 @@ class RedisMonitor < Scout::Plugin
     redis = Redis.new :port     => option(:client_port),
                       :db       => option(:db),
                       :password => option(:password),
-                      :host     => options(:client_host)
+                      :host     => option(:client_host)
     begin
       info = redis.info
     rescue Errno::ECONNREFUSED => error
