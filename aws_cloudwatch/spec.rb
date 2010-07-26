@@ -154,52 +154,6 @@ describe "AwsCloudwatch - Usual RDS execution " do
   
 end
 
-describe "AwsCloudwatch - RDS execution with success result" do
-  @success_monitor_response_labels, @broken_monitor_response_labels, @error_monitor_response_labels = [], [], []
-  
-  before(:all) do
-    current_run = Time.now
-    last_run = current_run - 3*60
-    memory   = {}
-    options  = {:aws_access_key => '0B5MN90FYXXKWR8S17G2', :aws_secret =>  '80dRHe6NSdBdt/Tz0P6qrSg6XgM2KKMkFxT4bUzK', :dimension => 'rp-tracking-service',:namespace => 'AWS/RDS'}
-
-    plugin = AwsCloudwatch.new(last_run, memory, options)
-
-    @random_label_values = {}
-    @success_monitor_response_labels, @broken_monitor_response_labels, @error_monitor_response_labels = [], [], []
-    # eval options label and average_value
-    average_value = 1
-
-    FakeWeb.allow_net_connect = false
-
-    AwsCloudwatch::RDS_MEASURES.each do |label|
-      # generate 3 random responses
-      fake_web_options=[]
-      fake_web_options << options={:times => 1, :body => eval(MONITOR_RESPONSE)}
-      FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FRDS|, fake_web_options)
-    end
-
-    average_value = 1
-    FakeWeb.register_uri(:post, %r|https://rds.amazonaws.com/|, :body => eval(RDS_RESPONSE))
-
-    plugin.build_report
-    
-    @error_hash = plugin.data_for_server[:errors].inject({}) do |r,error|
-      r[error[:body].split("\n").first] = true
-      r
-    end
-    
-    @report_hash = plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
-  end
-
-  AwsCloudwatch::RDS_MEASURES.each do |label| 
-    it "should render a correct result on label : #{label}" do
-        @report_hash[label].should == 1
-    end
-  end
-
-end
-
 describe "AwsCloudwatch - Usual EC2 execution " do
   before(:all) do
     current_run = Time.now
@@ -238,169 +192,259 @@ describe "AwsCloudwatch - Usual EC2 execution " do
   
 end
 
-
-describe "AwsCloudwatch - EC2 execution" do
+describe "AwsCloudwatch" do
   
   before(:all) do
-    current_run = Time.now
-    @last_run = current_run - 3*60
-    memory   = {:NetworkIn=>2, 
-                :DiskWriteOps=>2, 
-                :fails_count_NetworkOut=>1, 
-                :CPUUtilization=>2,
-                :fails_count_DiskReadBytes=>1, 
-                :NetworkOut=>2, 
-                :DiskReadBytes=>2, 
-                :fails_count_DiskReadOps=>1, 
-                :fails_count_DiskWriteBytes=>1, 
-                :DiskReadOps=>2, 
-                :fails_count_NetworkIn=>1, 
-                :DiskWriteBytes=>2, 
-                :fails_count_DiskWriteOps=>1, 
-                :fails_count_CPUUtilization=>1}
-    options  = {:aws_access_key => '0B5MN90FYXXKWR8S17G2', :aws_secret =>  '80dRHe6NSdBdt/Tz0P6qrSg6XgM2KKMkFxT4bUzK', :dimension => 'rp-tracking-service',:namespace => 'AWS/EC2'}
-
-    @plugin = AwsCloudwatch.new(@last_run, memory, options)
-
+    @current_run = Time.now
+    @last_run = @current_run - 3*60
+    @plugin_options  = {:aws_access_key => '0B5MN90FYXXKWR8S17G2', :aws_secret =>  '80dRHe6NSdBdt/Tz0P6qrSg6XgM2KKMkFxT4bUzK', :dimension => 'rp-tracking-service'}
     FakeWeb.allow_net_connect = false
-    
-  end
-  describe "with success result" do
-    
-    before(:all) do
-      # eval options label and average_value
-      average_value = 1
-      AwsCloudwatch::EC2_MEASURES.each do |label|
-        fake_web_options=[]
-        fake_web_options << {:times => 1, :body => eval(MONITOR_RESPONSE)}
-        FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
-      end
-
-      @plugin.build_report
-  
-      @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
-        r[error[:body].split("\n").first] = true
-        r
-      end
-  
-      @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
-    end
-    
-    AwsCloudwatch::EC2_MEASURES.each do |label| 
-      it "should render a correct result on label : #{label}" do
-        @report_hash[label].should == 1
-        @error_hash.should be_empty
-      end
-    end
-  end  
-    
-  describe "with broken result" do
-
-    before(:all) do
-      # eval options label and average_value
-      average_value = 1
-      AwsCloudwatch::EC2_MEASURES.each do |label|
-        fake_web_options=[]
-        fake_web_options << {:times => 1, :body => eval(BROKEN_MONITOR_RESPONSE)}
-        FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
-      end
-
-      @plugin.build_report
-
-      @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
-        r[error[:body].split("\n").first] = true
-        r
-      end
-
-      @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
-    end
-
-    AwsCloudwatch::EC2_MEASURES.each do |label| 
-      it "should render a correct result on label : #{label}" do
-        @report_hash[label].should == 2
-        @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 2
-        @error_hash.should be_empty
-      end
-    end
   end
   
-  describe "with error result" do
-
+  describe "RDS" do
     before(:all) do
-      # eval options label and average_value
-      average_value = 1
-      AwsCloudwatch::EC2_MEASURES.each do |label|
-        fake_web_options=[]
-        fake_web_options << {:times => 1, :body => eval(ERROR_MONITOR_RESPONSE), :status => ["504", "Internal Server Error"]}
-        FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
-      end
-
-      @plugin.build_report
-
-      @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
-        r[error[:body].split("\n").first] = true
-        r
-      end
-
-      @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
+      @plugin_memory   = {
+        :CPUUtilization=>2,
+        :DatabaseConnections=>2,
+        :ReadIOPS=>2,
+        :WriteIOPS=>2,
+        :ReadLatency=>2,
+        :WriteLatency=>2,
+        :ReadThroughput=>2,
+        :WriteThroughput=>2,
+        :FreeStorageSpace=>2,
+        :fails_count_CPUUtilization=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_DatabaseConnections=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_ReadIOPS=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_WriteIOPS=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_ReadLatency=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_WriteLatency=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_ReadThroughput=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_WriteThroughput=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT,
+        :fails_count_FreeStorageSpace=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT
+      }
+      @plugin = AwsCloudwatch.new(@last_run, @plugin_memory, @plugin_options.merge(:namespace => 'AWS/RDS'))
     end
 
-    AwsCloudwatch::EC2_MEASURES.each do |label| 
-      it "should render a correct result on label : #{label}" do
-        @report_hash[label].should == 2
-        @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 2
-        @error_hash.should be_empty
+    describe "with success result" do
+      before(:all) do
+        average_value = 1
+        AwsCloudwatch::RDS_MEASURES.each do |label|
+          fake_web_options=[]
+          fake_web_options << {:times => 1, :body => eval(MONITOR_RESPONSE)}
+          FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FRDS|, fake_web_options)
+        end
+        FakeWeb.register_uri(:post, %r|https://rds.amazonaws.com/|, :body => eval(RDS_RESPONSE))
+        @plugin.build_report
+        @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
+          r[error[:body].split("\n").first] = true
+          r
+        end
+        @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
       end
-    end
-  end
-  
-  describe "with error result and report after number of retries" do
-
-    before(:all) do
       
-      memory   = {:NetworkIn=>2, 
-                  :DiskWriteOps=>2, 
-                  :fails_count_NetworkOut=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
-                  :CPUUtilization=>2,
-                  :fails_count_DiskReadBytes=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
-                  :NetworkOut=>2, 
-                  :DiskReadBytes=>2, 
-                  :fails_count_DiskReadOps=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
-                  :fails_count_DiskWriteBytes=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
-                  :DiskReadOps=>2, 
-                  :fails_count_NetworkIn=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
-                  :DiskWriteBytes=>2, 
-                  :fails_count_DiskWriteOps=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
-                  :fails_count_CPUUtilization=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT}
-      options  = {:aws_access_key => '0B5MN90FYXXKWR8S17G2', :aws_secret =>  '80dRHe6NSdBdt/Tz0P6qrSg6XgM2KKMkFxT4bUzK', :dimension => 'rp-tracking-service',:namespace => 'AWS/EC2'}
-
-      @plugin = AwsCloudwatch.new(@last_run, memory, options)
+      AwsCloudwatch::RDS_MEASURES.each do |label| 
+        it "should render a correct result on label : #{label}" do
+          @report_hash[label].should == 1
+          @error_hash.should be_empty
+        end
+      end
+            
+    end
+    
+    describe "with broken result" do
+      before(:all) do
+        @plugin_memory   = {
+          :CPUUtilization=>2,
+          :DatabaseConnections=>2,
+          :ReadIOPS=>2,
+          :WriteIOPS=>2,
+          :ReadLatency=>2,
+          :WriteLatency=>2,
+          :ReadThroughput=>2,
+          :WriteThroughput=>2,
+          :FreeStorageSpace=>2,
+          :fails_count_CPUUtilization=>2,
+          :fails_count_DatabaseConnections=>2,
+          :fails_count_ReadIOPS=>2,
+          :fails_count_WriteIOPS=>2,
+          :fails_count_ReadLatency=>2,
+          :fails_count_WriteLatency=>2,
+          :fails_count_ReadThroughput=>2,
+          :fails_count_WriteThroughput=>2,
+          :fails_count_FreeStorageSpace=>2
+        }
+        @plugin = AwsCloudwatch.new(@last_run, @plugin_memory, @plugin_options.merge(:namespace => 'AWS/RDS'))
+        average_value = 1
+        AwsCloudwatch::RDS_MEASURES.each do |label|
+          fake_web_options=[]
+          fake_web_options << {:times => 1, :body => eval(BROKEN_MONITOR_RESPONSE)}
+          FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FRDS|, fake_web_options)
+        end
+        FakeWeb.register_uri(:post, %r|https://rds.amazonaws.com/|, :body => eval(RDS_RESPONSE))
+        @plugin.build_report
+        @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
+          r[error[:body].split("\n").first] = true
+          r
+        end
+        @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
+      end
       
-      # eval options label and average_value
-      average_value = 1
-      AwsCloudwatch::EC2_MEASURES.each do |label|
-        fake_web_options=[]
-        fake_web_options << {:times => 1, :body => eval(ERROR_MONITOR_RESPONSE), :status => ["504", "Internal Server Error"]}
-        FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
+      AwsCloudwatch::RDS_MEASURES.each do |label| 
+        it "should render a correct result on label : #{label}" do
+          @report_hash[label].should == 2
+          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
+          @error_hash.should be_empty
+        end
       end
-
-      @plugin.build_report
-
-      @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
-        r[error[:body].split("\n").first] = true
-        r
-      end
-
-      @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
+            
     end
 
-    AwsCloudwatch::EC2_MEASURES.each do |label| 
-      it "should render a correct result on label : #{label}" do
-        @report_hash[label].should == 2
-        @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT + 1
-        @error_hash["Something went wrong with AWS more then 30 times"].should == true
+    describe "with error result" do
+      before(:all) do
+        average_value = 1
+        AwsCloudwatch::RDS_MEASURES.each do |label|
+          fake_web_options=[]
+          fake_web_options << {:times => 1, :body => eval(ERROR_MONITOR_RESPONSE), :status => ["504", "Internal Server Error"]}
+          FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FRDS|, fake_web_options)
+        end
+        FakeWeb.register_uri(:post, %r|https://rds.amazonaws.com/|, :body => eval(RDS_RESPONSE))
+        @plugin.build_report
+        @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
+          r[error[:body].split("\n").first] = true
+          r
+        end
+        @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
       end
+      
+      AwsCloudwatch::RDS_MEASURES.each do |label| 
+        it "should render a correct result on label : #{label}" do
+          @report_hash[label].should == 2
+          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT + 1
+          @error_hash["Something went wrong with AWS more then 30 times"].should == true
+        end
+      end
+      
     end
+
   end
-  
+
+  describe "EC2" do
+    before(:all) do
+      @plugin_memory   = {
+        :NetworkIn=>2, 
+        :DiskWriteOps=>2, 
+        :CPUUtilization=>2,
+        :NetworkOut=>2, 
+        :DiskReadBytes=>2, 
+        :DiskReadOps=>2, 
+        :DiskWriteBytes=>2, 
+        :fails_count_NetworkOut=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
+        :fails_count_DiskReadBytes=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
+        :fails_count_DiskReadOps=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
+        :fails_count_DiskWriteBytes=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
+        :fails_count_NetworkIn=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
+        :fails_count_DiskWriteOps=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT, 
+        :fails_count_CPUUtilization=>AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT
+      }
+      @plugin = AwsCloudwatch.new(@last_run, @plugin_memory, @plugin_options.merge(:namespace => 'AWS/EC2'))
+    end
+
+    describe "with success result" do
+      before(:all) do
+        average_value = 1
+        AwsCloudwatch::EC2_MEASURES.each do |label|
+          fake_web_options=[]
+          fake_web_options << {:times => 1, :body => eval(MONITOR_RESPONSE)}
+          FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
+        end
+        @plugin.build_report
+        @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
+          r[error[:body].split("\n").first] = true
+          r
+        end
+        @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
+      end
+      
+      AwsCloudwatch::EC2_MEASURES.each do |label| 
+        it "should render a correct result on label : #{label}" do
+          @report_hash[label].should == 1
+          @error_hash.should be_empty
+        end
+      end
+      
+    end
+    
+    describe "with broken result" do
+      before(:all) do
+        @plugin_memory   = {
+          :NetworkIn=>2, 
+          :DiskWriteOps=>2, 
+          :CPUUtilization=>2,
+          :NetworkOut=>2, 
+          :DiskReadBytes=>2, 
+          :DiskReadOps=>2, 
+          :DiskWriteBytes=>2, 
+          :fails_count_NetworkOut=>2, 
+          :fails_count_DiskReadBytes=>2, 
+          :fails_count_DiskReadOps=>2, 
+          :fails_count_DiskWriteBytes=>2, 
+          :fails_count_NetworkIn=>2, 
+          :fails_count_DiskWriteOps=>2, 
+          :fails_count_CPUUtilization=>2
+        }
+        @plugin = AwsCloudwatch.new(@last_run, @plugin_memory, @plugin_options.merge(:namespace => 'AWS/EC2'))
+        average_value = 1
+        AwsCloudwatch::EC2_MEASURES.each do |label|
+          fake_web_options=[]
+          fake_web_options << {:times => 1, :body => eval(BROKEN_MONITOR_RESPONSE)}
+          FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
+        end
+        @plugin.build_report
+        @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
+          r[error[:body].split("\n").first] = true
+          r
+        end
+        @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
+      end
+      
+      AwsCloudwatch::EC2_MEASURES.each do |label| 
+        it "should render a correct result on label : #{label}" do
+          @report_hash[label].should == 2
+          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
+          @error_hash.should be_empty
+        end
+      end
+            
+    end
+
+    describe "with error result" do
+      before(:all) do
+        average_value = 1
+        AwsCloudwatch::EC2_MEASURES.each do |label|
+          fake_web_options=[]
+          fake_web_options << {:times => 1, :body => eval(ERROR_MONITOR_RESPONSE), :status => ["504", "Internal Server Error"]}
+          FakeWeb.register_uri(:get, %r|https://monitoring\.amazonaws\.com.*?MeasureName=#{label}&Namespace=AWS%2FEC2|, fake_web_options)
+        end
+        @plugin.build_report
+        @error_hash = @plugin.data_for_server[:errors].inject({}) do |r,error|
+          r[error[:body].split("\n").first] = true
+          r
+        end
+        @report_hash = @plugin.data_for_server[:reports].inject({}){|r,d|r.merge!(d)}
+      end
+      
+      AwsCloudwatch::EC2_MEASURES.each do |label| 
+        it "should render a correct result on label : #{label}" do
+          @report_hash[label].should == 2
+          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT + 1
+          @error_hash["Something went wrong with AWS more then 30 times"].should == true
+        end
+      end
+                  
+    end
+
+  end
 end
+
+
