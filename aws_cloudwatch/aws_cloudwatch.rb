@@ -14,7 +14,8 @@ class AwsCloudwatch < Scout::Plugin
   # CPUUtilization DatabaseConnections FreeStorageSpace
   RDS_MEASURES = %w(CPUUtilization DatabaseConnections ReadIOPS WriteIOPS ReadLatency WriteLatency ReadThroughput WriteThroughput)
   RDS_SPECIAL_MEASURES = %w(FreeStorageSpace)
-
+  
+  NUMBER_OF_RETRIES_FOR_ALERT = 30
 
   def build_report
     aws_access_key  = option(:aws_access_key)
@@ -162,24 +163,32 @@ class AwsCloudwatch < Scout::Plugin
       
       next if response.is_error? 
       
-      label, stats = response.structure.first, response.structure.last
+      stats = response.structure.last
       
       next if !stats.is_a?(Array) || stats.empty?
       
       value = stats.first[:average].to_f
       
-      report(label => value)
-      return label, value
+      remember("fails_count_#{measure}".to_sym, 0)
+      return store_report(measure, value)
     end
     
-    if response.is_error?
-      error(:subject=>"AWS CloudWatch Processing Error", :body=>"Got AWS getMetricStatistic error for measure #{params[:MeasureName]}\n#{response.inspect}")
-    else 
-      error(:subject=>"AWS CloudWatch Processing Error", :body=>"Something went wrong with AWS getMetricStatistics for label #{params[:MeasureName]}\n#{response.inspect}")
+    value = memory(measure.to_sym)    
+    fails_count = memory("fails_count_#{measure}".to_sym) || 0
+    
+    if fails_count >= NUMBER_OF_RETRIES_FOR_ALERT
+      error(:subject=>"AWS CloudWatch Processing Error", :body=>"Something went wrong with AWS more then #{NUMBER_OF_RETRIES_FOR_ALERT} times")
     end
-
-    return nil, nil
+    remember("fails_count_#{measure}".to_sym, fails_count + 1)
+    return store_report(measure, value)
   end  
+  
+  def store_report(measure, value)
+    report(measure => value)
+    remember(measure.to_sym, value)
+    return measure, value
+  end
+    
   
 end
 
