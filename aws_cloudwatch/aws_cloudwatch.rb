@@ -14,6 +14,7 @@ class AwsCloudwatch < Scout::Plugin
   # CPUUtilization DatabaseConnections FreeStorageSpace
   RDS_MEASURES = %w(CPUUtilization DatabaseConnections ReadIOPS WriteIOPS ReadLatency WriteLatency ReadThroughput WriteThroughput)
   RDS_SPECIAL_MEASURES = %w(FreeStorageSpace)
+  ALL_RDS_MEASURES = RDS_MEASURES + RDS_SPECIAL_MEASURES
   
   NUMBER_OF_RETRIES_FOR_ALERT = 30
 
