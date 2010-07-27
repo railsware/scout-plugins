@@ -205,6 +205,58 @@ describe "AwsCloudwatch" do
     FakeWeb.register_uri(:post, %r|https://rds.amazonaws.com/|, :body => eval(RDS_RESPONSE))
   end
   
+  shared_examples_for "all namespaces with success result" do
+    @measures.each do |label| 
+      it "should render a correct result on label : #{label}" do
+        @report_hash[label].should == 1
+        @error_hash.should be_empty
+      end
+      
+      it "should reset fails_count on label : #{label}" do
+        @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 0
+      end
+    end
+  end
+  
+  shared_examples_for "all namespaces with broken result" do
+    @measures.each do |label| 
+      it "should render a correct result on label : #{label}" do
+        @report_hash[label].should == 2
+        @error_hash.should be_empty
+      end
+      
+      it "should increase fails_count on label : #{label}" do
+        @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
+      end
+    end
+  end  
+  
+  shared_examples_for "all namespaces with error result" do
+    @measures.each do |label| 
+      it "should render a correct result on label : #{label}" do
+        @report_hash[label].should == 2
+        @error_hash.should be_empty
+      end
+    
+      it "should increase fails_count on label : #{label}" do
+        @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
+      end
+    end
+  end
+  
+  shared_examples_for "all namespaces with error result on execution after number of retries" do
+    @measures.each do |label| 
+      it "should render a correct result on label : #{label}" do
+        @report_hash[label].should == 2
+        @error_hash["Something went wrong with AWS more then 30 times"].should == true
+      end
+      
+      it "should increase fails_count on label : #{label}" do
+        @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT + 1
+      end
+    end
+  end
+  
   describe "RDS" do
     before(:all) do
       AwsCloudwatch::ALL_RDS_MEASURES.each do |measure|
@@ -220,16 +272,8 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::RDS_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 1
-          @error_hash.should be_empty
-        end
-        
-        it "should reset fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 0
-        end
-      end       
+      @measures = AwsCloudwatch::ALL_RDS_MEASURES
+      it_should_behave_like "all namespaces with success result"      
     end
     
     describe "with broken result" do
@@ -238,34 +282,8 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::RDS_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 2
-          @error_hash.should be_empty
-        end
-        
-        it "should increase fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
-        end
-      end     
-    end
-    
-    describe "with broken result" do
-      before(:all) do
-        register_fake_responses :response => BROKEN_MONITOR_RESPONSE
-        build_report
-      end
-      
-      AwsCloudwatch::RDS_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 2
-          @error_hash.should be_empty
-        end
-        
-        it "should increase fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
-        end
-      end     
+      @measures = AwsCloudwatch::ALL_RDS_MEASURES
+      it_should_behave_like "all namespaces with broken result"
     end
     
     describe "with error result" do
@@ -274,16 +292,8 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::RDS_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 2
-          @error_hash.should be_empty
-        end
-        
-        it "should increase fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
-        end
-      end     
+      @measures = AwsCloudwatch::ALL_RDS_MEASURES
+      it_should_behave_like "all namespaces with error result"  
     end
     
 
@@ -296,19 +306,9 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::RDS_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 2
-          @error_hash["Something went wrong with AWS more then 30 times"].should == true
-        end
-        
-        it "should increase fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT + 1
-        end
-      end
-      
+      @measures = AwsCloudwatch::ALL_RDS_MEASURES
+      it_should_behave_like "all namespaces with error result on execution after number of retries"
     end
-
   end
 
   describe "EC2" do
@@ -327,16 +327,8 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::EC2_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 1
-          @error_hash.should be_empty
-        end
-        
-        it "should reset fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 0
-        end
-      end
+      @measures = AwsCloudwatch::EC2_MEASURES
+      it_should_behave_like "all namespaces with success result"
     end
     
     describe "with broken result" do
@@ -345,16 +337,8 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::EC2_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 2
-          @error_hash.should be_empty
-        end
-        
-        it "should increase fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
-        end
-      end     
+      @measures = AwsCloudwatch::EC2_MEASURES
+      it_should_behave_like "all namespaces with broken result"
     end
     
     describe "with error result" do
@@ -363,16 +347,8 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::EC2_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 2
-          @error_hash.should be_empty
-        end
-        
-        it "should increase fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == 3
-        end
-      end     
+      @measures = AwsCloudwatch::EC2_MEASURES
+      it_should_behave_like "all namespaces with error result"  
     end
 
     describe "with error result on execution after number of retries" do
@@ -384,19 +360,9 @@ describe "AwsCloudwatch" do
         build_report
       end
       
-      AwsCloudwatch::EC2_MEASURES.each do |label| 
-        it "should render a correct result on label : #{label}" do
-          @report_hash[label].should == 2
-          @error_hash["Something went wrong with AWS more then 30 times"].should == true
-        end
-        
-        it "should increase fails_count on label : #{label}" do
-          @plugin.data_for_server[:memory]["fails_count_#{label}".to_sym].should == AwsCloudwatch::NUMBER_OF_RETRIES_FOR_ALERT + 1
-        end
-      end
-                  
+      @measures = AwsCloudwatch::EC2_MEASURES
+      it_should_behave_like "all namespaces with error result on execution after number of retries"
     end
-
   end
 end
 
